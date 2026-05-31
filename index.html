@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Base de Figuras</title>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        
+        /* Contenedor principal de las gráficas */
+        .dashboard-graficas {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+        
+        /* Cajas individuales para cada gráfica */
+        .caja-grafica {
+            width: 45%;
+            min-width: 300px;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        /* Estilo para la barra de búsqueda general */
+        .contenedor-filtro {
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        #inputFiltro {
+            padding: 10px;
+            width: 300px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        /* Estilos de la tabla */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+            vertical-align: top;
+        }
+        
+        /* Estilos para los filtros tipo Excel en los encabezados */
+        th select {
+            display: block;
+            width: 100%;
+            margin-top: 8px;
+            padding: 6px;
+            border-radius: 4px;
+            border: none;
+            color: #333;
+            font-size: 14px;
+            background-color: white;
+            cursor: pointer;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        tr:hover {
+            background-color: #ddd;
+        }
+
+        /* Contenedor y diseño del botón de Exportar */
+        .contenedor-botones {
+            margin-top: 15px;
+            display: flex;
+            justify-content: flex-start;
+        }
+        .btn-excel {
+            background-color: #217346; /* Verde oficial de Excel */
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .btn-excel:hover {
+            background-color: #1a5c38;
+        }
+        .btn-excel:active {
+            transform: scale(0.98);
+        }
+    </style>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+</head>
+<body>
+
+    <h1>Dashboard de Detección de Figuras</h1>
+
+    <div class="dashboard-graficas">
+        <div class="caja-grafica">
+            <canvas id="graficaFiguras"></canvas>
+        </div>
+        <div class="caja-grafica">
+            <canvas id="graficaDimensiones"></canvas>
+        </div>
+    </div>
+
+    <div class="contenedor-filtro">
+        <input type="text" id="inputFiltro" onkeyup="procesarYRenderizarTabla()" placeholder="🔍 Búsqueda global rápida...">
+    </div>
+
+    <table id="tablaFiguras">
+        <thead>
+            <tr>
+                <th>
+                    Fecha y Hora
+                    <select id="filtroFecha" onchange="procesarYRenderizarTabla()">
+                        <option value="todos">Todos (Orden de BD)</option>
+                        <option value="recientes">Más recientes primero</option>
+                        <option value="antiguos">Más antiguos primero</option>
+                        <option value="ultimos10">Ver últimos 10 registrados</option>
+                        <option value="ultimos50">Ver últimos 50 registrados</option>
+                        <option value="primeros10">Ver primeros 10 registrados</option>
+                        <option value="primeros50">Ver primeros 50 registrados</option> </select>
+                </th>
+                <th>
+                    Figura
+                    <select id="filtroFigura" onchange="procesarYRenderizarTabla()">
+                        <option value="">Todas</option>
+                    </select>
+                </th>
+                <th>
+                    Dimensión (2D/3D)
+                    <select id="filtroDimension" onchange="procesarYRenderizarTabla()">
+                        <option value="">Todas</option>
+                    </select>
+                </th>
+            </tr>
+        </thead>
+        <tbody id="cuerpoTabla">
+            <tr><td colspan="3" style="text-align: center;">Cargando datos...</td></tr>
+        </tbody>
+    </table>
+
+    <div class="contenedor-botones">
+        <button class="btn-excel" onclick="exportarExcel()">📊 Exportar datos</button>
+    </div>
+
+    <script>
+        // Registrar el plugin de etiquetas globales para las gráficas
+        Chart.register(ChartDataLabels);
+
+        // Variables globales para almacenar el bloque de datos y el estado filtrado actual
+        let datosGlobales = [];
+        let datosFiltradosActuales = [];
+
+        // ---------------------------------------------------------
+        // 1. INICIALIZACIÓN DE GRÁFICAS
+        // ---------------------------------------------------------
+        const ctxFiguras = document.getElementById('graficaFiguras').getContext('2d');
+        const chartFiguras = new Chart(ctxFiguras, {
+            type: 'bar', 
+            data: { labels: [], datasets: [{ label: 'Cantidad Detectada', data: [], backgroundColor: '#36A2EB' }] },
+            options: { 
+                responsive: true, 
+                plugins: { 
+                    title: { display: true, text: 'Figuras Más Detectadas' },
+                    datalabels: {
+                        color: 'black',
+                        anchor: 'end',
+                        align: 'top',
+                        font: { weight: 'bold' }
+                    }
+                } 
+            }
+        });
+
+        const ctxDimensiones = document.getElementById('graficaDimensiones').getContext('2d');
+        const chartDimensiones = new Chart(ctxDimensiones, {
+            type: 'pie', 
+            data: { labels: [], datasets: [{ data: [], backgroundColor: ['#FF6384', '#FFCE56', '#4BC0C0'] }] },
+            options: { 
+                responsive: true, 
+                plugins: { 
+                    title: { display: true, text: 'Proporción 2D vs 3D' },
+                    datalabels: {
+                        color: '#fff',
+                        font: { weight: 'bold', size: 14 },
+                        formatter: (value, ctx) => {
+                            let sum = 0;
+                            let dataArr = ctx.chart.data.datasets[0].data;
+                            dataArr.map(data => { sum += data; });
+                            let percentage = (value * 100 / sum).toFixed(1) + "%";
+                            return value + "\n(" + percentage + ")";
+                        }
+                    }
+                } 
+            }
+        });
+
+        // ---------------------------------------------------------
+        // 2. CONFIGURACIÓN DE FIREBASE
+        // ---------------------------------------------------------
+        const firebaseConfig = {
+            databaseURL: "https://base-de-datos-b989a-default-rtdb.firebaseio.com"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const refFiguras = database.ref('Basedefiguras');
+
+        // ---------------------------------------------------------
+        // 3. LECTURA DE DATOS EN TIEMPO REAL
+        // ---------------------------------------------------------
+        refFiguras.on('value', (snapshot) => {
+            datosGlobales = []; 
+            
+            let opcionesFiguras = new Set();
+            let opcionesDimensiones = new Set();
+
+            if (snapshot.exists()) {
+                snapshot.forEach((hijoSnapshot) => {
+                    const datos = hijoSnapshot.val();
+                    
+                    const objetoData = {
+                        fecha: datos.fecha || 'Sin fecha',
+                        figura: datos.Figura || 'Desconocida',
+                        dimension: datos.Dimension || 'Desconocida'
+                    };
+
+                    datosGlobales.push(objetoData);
+                    
+                    opcionesFiguras.add(objetoData.figura);
+                    opcionesDimensiones.add(objetoData.dimension);
+                });
+
+                actualizarGraficas(datosGlobales);
+                
+                actualizarDropdown('filtroFigura', opcionesFiguras);
+                actualizarDropdown('filtroDimension', opcionesDimensiones);
+                
+                procesarYRenderizarTabla();
+
+            } else {
+                document.getElementById('cuerpoTabla').innerHTML = '<tr><td colspan="3" style="text-align: center;">No hay datos en la base de datos.</td></tr>';
+            }
+        });
+
+        function actualizarDropdown(idElemento, setOpciones) {
+            const select = document.getElementById(idElemento);
+            const valorActual = select.value; 
+            select.innerHTML = '<option value="">Todas</option>'; 
+            
+            Array.from(setOpciones).sort().forEach(opcion => {
+                const opt = document.createElement('option');
+                opt.value = opcion;
+                opt.textContent = opcion;
+                select.appendChild(opt);
+            });
+            if (setOpciones.has(valorActual)) { select.value = valorActual; }
+        }
+
+        function actualizarGraficas(datos) {
+            let conteoFiguras = {};
+            let conteoDimensiones = {};
+
+            datos.forEach(item => {
+                conteoFiguras[item.figura] = (conteoFiguras[item.figura] || 0) + 1;
+                conteoDimensiones[item.dimension] = (conteoDimensiones[item.dimension] || 0) + 1;
+            });
+
+            chartFiguras.data.labels = Object.keys(conteoFiguras);
+            chartFiguras.data.datasets[0].data = Object.values(conteoFiguras);
+            chartFiguras.update();
+
+            chartDimensiones.data.labels = Object.keys(conteoDimensiones);
+            chartDimensiones.data.datasets[0].data = Object.values(conteoDimensiones);
+            chartDimensiones.update();
+        }
+
+        // ---------------------------------------------------------
+        // 4. PROCESAMIENTO DE FILTROS, ORDEN Y LÍMITES
+        // ---------------------------------------------------------
+        function procesarYRenderizarTabla() {
+            const busquedaGlobal = document.getElementById("inputFiltro").value.toUpperCase();
+            const filtroFig = document.getElementById("filtroFigura").value;
+            const filtroDim = document.getElementById("filtroDimension").value;
+            const filtroFecha = document.getElementById("filtroFecha").value;
+
+            // FASE A: Filtrado básico por inputs
+            let datosProcesados = datosGlobales.filter(item => {
+                const textoFila = `${item.fecha} ${item.figura} ${item.dimension}`.toUpperCase();
+                const coincideGlobal = textoFila.indexOf(busquedaGlobal) > -1;
+                const coincideFigura = (filtroFig === "" || item.figura === filtroFig);
+                const coincideDimension = (filtroDim === "" || item.dimension === filtroDim);
+                
+                return coincideGlobal && coincideFigura && coincideDimension;
+            });
+
+            // FASE B: Ordenamiento Cronológico
+            if (filtroFecha === "recientes" || filtroFecha === "ultimos10" || filtroFecha === "ultimos50") {
+                datosProcesados.sort((a, b) => b.fecha.localeCompare(a.fecha));
+            } else if (filtroFecha === "antiguos" || filtroFecha === "primeros10" || filtroFecha === "primeros50") {
+                datosProcesados.sort((a, b) => a.fecha.localeCompare(b.fecha));
+            }
+
+            // FASE C: Aplicación de Límites de tamaño
+            if (filtroFecha === "ultimos10" || filtroFecha === "primeros10") {
+                datosProcesados = datosProcesados.slice(0, 10);
+            } else if (filtroFecha === "ultimos50" || filtroFecha === "primeros50") {
+                datosProcesados = datosProcesados.slice(0, 50);
+            }
+
+            // Almacenar el resultado en la variable global para que el botón sepa qué descargar
+            datosFiltradosActuales = datosProcesados;
+
+            // FASE D: Renderizado final en la Tabla HTML
+            const tbody = document.getElementById('cuerpoTabla');
+            tbody.innerHTML = '';
+
+            if (datosProcesados.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">No se encontraron registros coincidentes.</td></tr>';
+                return;
+            }
+
+            datosProcesados.forEach(item => {
+                const fila = document.createElement('tr');
+                fila.innerHTML = `<td>${item.fecha}</td><td>${item.figura}</td><td>${item.dimension}</td>`;
+                tbody.appendChild(fila);
+            });
+        }
+
+        // ---------------------------------------------------------
+        // 5. FUNCIÓN NUEVA: EXPORTACIÓN COMPATIBLE CON EXCEL
+        // ---------------------------------------------------------
+        function exportarExcel() {
+            if (datosFiltradosActuales.length === 0) {
+                alert("No hay registros en la tabla para exportar.");
+                return;
+            }
+
+            // Creamos una estructura de tabla limpia en código HTML para que Excel la abra con formato nativo
+            let contenidoHtml = `
+                <meta charset="utf-8">
+                <table border="1">
+                    <thead>
+                        <tr style="background-color: #007bff; color: white; font-weight: bold;">
+                            <th>Fecha y Hora</th>
+                            <th>Figura</th>
+                            <th>Dimension (2D/3D)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            // Insertamos cada fila de los datos filtrados actuales
+            datosFiltradosActuales.forEach(item => {
+                contenidoHtml += `
+                    <tr>
+                        <td>${item.fecha}</td>
+                        <td>${item.figura}</td>
+                        <td>${item.dimension}</td>
+                    </tr>
+                `;
+            });
+
+            contenidoHtml += `
+                    </tbody>
+                </table>
+            `;
+
+            // Creamos un archivo binario temporal (Blob) simulando un libro de Excel (.xls)
+            const blob = new Blob(['\uFEFF' + contenidoHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+            const urlDescarga = URL.createObjectURL(blob);
+            
+            // Disparador invisible de descarga en el navegador
+            const enlaceAlterno = document.createElement('a');
+            enlaceAlterno.href = urlDescarga;
+            enlaceAlterno.download = 'Reporte_Deteccion_Figuras.xls';
+            document.body.appendChild(enlaceAlterno);
+            enlaceAlterno.click();
+            
+            // Limpieza de memoria temporal
+            document.body.removeChild(enlaceAlterno);
+            URL.revokeObjectURL(urlDescarga);
+        }
+    </script>
+</body>
+</html>
